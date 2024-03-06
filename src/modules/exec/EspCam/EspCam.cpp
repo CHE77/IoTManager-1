@@ -9,6 +9,12 @@
 #include "FS.h"     // SD Card ESP32
 #include "SD_MMC.h" // SD Card ESP32
 
+#include <map>
+#include <functional>
+
+// Определение типа указателя на функцию
+typedef void (*SensorMethod)(sensor_t *, int);
+
 void handleGetPic();
 
 // ===================
@@ -35,8 +41,39 @@ void handleGetPic();
 
 #include "camera_pins.h"
 
- IoTItem *_camItem = nullptr;
+IoTItem *_camItem = nullptr;
 camera_fb_t *frame = NULL;
+
+// Создание словаря для сопоставления строковых значений методов с указателями на функции
+std::map<std::string, SensorMethod> methodMap = {
+    {"set_brightness", &sensor_t::set_brightness},
+    {"set_contrast", &sensor_t::set_contrast},
+    {"set_saturation", &sensor_t::set_saturation},
+    {"set_gainceiling", &sensor_t::set_gainceiling},
+    {"set_quality", &sensor_t::set_quality},
+    {"set_raw_gma", &sensor_t::set_raw_gma},
+    {"set_lenc", &sensor_t::set_lenc},
+    {"set_special_effect", &sensor_t::set_special_effect},
+    {"set_wb_mode", &sensor_t::set_wb_mode},
+    {"set_aec2", &sensor_t::set_aec2},
+    {"set_aec_value", &sensor_t::set_aec_value},
+    {"set_agc_gain", &sensor_t::set_agc_gain},
+    {"set_gain_ctrl", &sensor_t::set_gain_ctrl},
+    {"set_exposure_ctrl", &sensor_t::set_exposure_ctrl},
+    {"set_hmirror", &sensor_t::set_hmirror},
+    {"set_vflip", &sensor_t::set_vflip},
+    {"set_dcw", &sensor_t::set_dcw},
+    {"set_bpc", &sensor_t::set_bpc},
+    {"set_wpc", &sensor_t::set_wpc},
+    {"set_raw_gma", &sensor_t::set_raw_gma},
+    //  {"set_lens_correction", &sensor_t::set_lens_correction},
+    //  {"set_test_pattern", &sensor_t::set_test_pattern},
+    {"set_pll", &sensor_t::set_pll},
+    {"set_xclk", &sensor_t::set_xclk},
+    {"set_framesize", &sensor_t::set_framesize},
+    // {"set_vsync_output", &sensor_t::set_vsync_output},
+    {"set_colorbar", &sensor_t::set_colorbar}};
+
 class EspCam : public IoTItem
 {
 private:
@@ -59,6 +96,24 @@ public:
         HTTP.on("/getpic", HTTP_GET, handleGetPic);
 
         initSD();
+    }
+
+    // Функция для вызова метода по строковому значению
+    void callSensorMethod(const std::string &methodName, sensor_t *s, int value)
+    {
+        // Поиск указателя на функцию в словаре
+        auto it = methodMap.find(methodName);
+        if (it != methodMap.end())
+        {
+            // Вызов метода, если он найден
+            SensorMethod method = it->second;
+            method(s, value);
+        }
+        else
+        {
+            // Обработка случая, когда метод не найден
+            // Вывод сообщения об ошибке или выполнение других действий
+        }
     }
 
     void doByInterval()
@@ -92,6 +147,11 @@ public:
         else if (command == "editFoto")
         {
             editFoto();
+        }
+        else
+        {
+            sensor_t *s = esp_camera_sensor_get();
+            callSensorMethod(command, s, param[0].valD);
         }
 
         return {};
@@ -316,7 +376,7 @@ void handleGetPic()
     if (((EspCam *)_camItem)->isUsedLed())
         ledcWrite(LED_LEDC_CHANNEL, CONFIG_LED_MAX_INTENSITY); // Turn on the flash
 
- //   camera_fb_t *fb = NULL;
+    //   camera_fb_t *fb = NULL;
     frame = esp_camera_fb_get();
 
     if (((EspCam *)_camItem)->isUsedLed())

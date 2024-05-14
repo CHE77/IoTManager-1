@@ -58,7 +58,14 @@ class TelegramLT : public IoTItem {
         return {};
     }
 
-    ~TelegramLT(){};
+    IoTItem *getTlgrmDriver()
+    {
+        return this;
+    }
+
+    ~TelegramLT() {
+        tlgrmItem = nullptr;
+    };
 };
 
 void *getAPI_TelegramLT(String subtype, String param) {

@@ -1,5 +1,6 @@
 #include "Global.h"
 #include "classes/IoTItem.h"
+#include "UpgradeFirm.h"
 // #define FB_NO_UNICODE
 // #define FB_NO_URLENCODE
 // #define FB_NO_OTA
@@ -27,7 +28,10 @@ String _token;
 String _chatID;
 bool _autos;
 bool _initSD;
-
+bool _resolveOTA;
+bool fl_rollback;
+bool fl_reboot;
+int8_t _OTAstate = -1;
 struct ButtonMenu
 {
     String message = "";
@@ -35,7 +39,15 @@ struct ButtonMenu
     String setId = "";
     String value = "";
 };
-
+/*
+struct updateFirm {
+    String settingsFlashJson;
+    String configJson;
+    String layoutJson;
+    String scenarioTxt;
+    String chartsData;
+};
+*/
 std::map<String, ButtonMenu *> mapBtnMenu;   // <btnName, ID>
 std::map<String, ButtonMenu *> mapBtnInline; // <btnName, ID>
 
@@ -45,16 +57,22 @@ private:
     bool _receiveMsg;
     String _prevMsg = "";
     bool _useLed = false;
+    uint8_t _textMode = 0;
 
 public:
     Telegram_v2(String parameters) : IoTItem(parameters)
     {
         jsonRead(parameters, "token", _token);
         jsonRead(parameters, "autos", _autos);
+        if (!jsonRead(parameters, "OTA", _resolveOTA))
+            _resolveOTA = 0;
         jsonRead(parameters, "receiveMsg", _receiveMsg);
         jsonRead(parameters, "chatID", _chatID);
+        _textMode = jsonReadInt(parameters, "textMode");
+        fl_rollback = false;
+        fl_reboot = false;
         instanceBot();
-        //      _myBot->setTextMode(FB_MARKDOWN);
+        _myBot->setTextMode(_textMode);
         _myBot->attach(telegramMsgParse);
 
 #ifdef ESP32
@@ -72,6 +90,42 @@ public:
         if (_receiveMsg && isNetworkActive())
         {
             _myBot->tick();
+            if (fl_rollback)
+            {
+                _myBot->tickManual(); // Чтобы отметить сообщение прочитанным
+                if (Update.rollBack())
+                {
+                    SerialPrint("I", F("Update"), F("Откат OTA успешно выполнен"));
+                    _myBot->sendMessage("Откат OTA запущен, плата будет перезагружена", _chatID);
+                    ESP.restart();
+                }
+                else
+                {
+                    SerialPrint("E", F("Update"), F("Откат OTA не выполнен!"));
+                    _myBot->sendMessage("Откат OTA не выполнен!", _chatID);
+                }
+            }
+            // была попытка OTA обновления. Обновляемся после ответа серверу!
+            if (_OTAstate >= 0)
+            {
+                _myBot->tickManual(); // Чтобы отметить сообщение прочитанным
+                String ota;
+                if (_OTAstate == 0)
+                    ota = F("Error");
+                else if (_OTAstate == 1)
+                    ota = F("No updates");
+                else if (_OTAstate == 2)
+                    ota = F("OK");
+                _myBot->sendMessage(ota, _chatID);
+                if (_OTAstate == 2)
+                    ESP.restart();
+                _OTAstate = -1;
+            }
+            if (fl_reboot)
+            {
+                _myBot->tickManual();
+                ESP.restart();
+            }
         }
         // Далее вызов doByInterval для обработки комманд
         IoTItem::loop();
@@ -302,6 +356,8 @@ public:
     //=============================================================================
     void static telegramMsgParse(FB_msg &msg)
     {
+        static String OTAfilepath = "";
+        static uint8_t typeOTA = 0;
         //     FB_msg msg;
         SerialPrint("i", F("Telegram"), "chat ID: " + msg.chatID + ", msg: " + msg.text);
         //  _myBot->setChatID(_chatID);
@@ -309,9 +365,114 @@ public:
         {
             _chatID = msg.chatID;
         }
+        // -------------- Обработка сообщения об откате --------------
+        // -------------------------------------------------------------------------
+        if (msg.text.indexOf("/rollback") != -1 && msg.chatID == _chatID)
+        {
+            _myBot->inlineMenu("Вы уверены, что хотите откатить прошивку? " + jsonReadStr(settingsFlashJson, F("name")) + " \n OTA_roll", F("Rollback \t Cancel"));
+        }
+        else if (msg.text.indexOf("OTA_roll") != -1)
+        {
+            // удаляем последнее сообщение от бота
+            _myBot->deleteMessage(_myBot->lastBotMsg());
+            if (msg.data.indexOf("Rollback") != -1)
+            {
+                if (Update.canRollBack())
+                {
+                    fl_rollback = true;
+                }
+                else
+                {
+                    SerialPrint("E", F("Update"), F("Откат OTA не возможен!"));
+                    _myBot->sendMessage("Откат OTA не возможен!", _chatID);
+                }
+            }
+        }
+        // -------------- Обработка файлов *.bin для прошивки по OTA --------------
+        // -------------------------------------------------------------------------
+        else if (msg.OTA && _resolveOTA && msg.chatID == _chatID)
+        {
+            // _myBot->editMessage(_myBot->lastUsrMsg(), "firmware...", _chatID);
+            OTAfilepath = msg.fileUrl;
+            if (msg.fileName.indexOf("littlefs") != -1)
+                typeOTA = FB_SPIFFS;
+            else if (msg.fileName.indexOf("firmware") != -1)
+                typeOTA = FB_FIRMWARE;
+            else
+                SerialPrint("E", F("Update"), "Unknown file: " + msg.fileName);
+            _myBot->inlineMenu("Вы уверены, что хотите прошить плату? " + jsonReadStr(settingsFlashJson, F("name")) + "\n OTA_firmware", F("Firmware \t Cancel"));
+        }
+        else if (msg.text.indexOf("OTA_firmware") != -1)
+        {
+            // удаляем последнее сообщение от бота
+            _myBot->deleteMessage(_myBot->lastBotMsg());
+            if (msg.data.indexOf("Firmware") != -1)
+            {
+                putUserDataToRam();
+                if (typeOTA == FB_SPIFFS)
+                {
+                    if (_updateFS((String *)&OTAfilepath) == 1)
+                    {
+                        saveUserDataToFlash();
+                        SerialPrint("!!!", F("Update"), "Start upgrade FS... ");
+                    }
+                    else
+                    {
+                        SerialPrint("E", F("Update"), F("FS Path error"));
+                        _myBot->sendMessage("FS Path error!", _chatID);
+                    }
+                }
+                else if (typeOTA == FB_FIRMWARE)
+                {
+                    if (_update((String *)&OTAfilepath) == 1)
+                    {
+                        saveUserDataToFlash();
+                        SerialPrint("!!!", F("Update"), "Start upgrade BUILD... ");
+                    }
+                    else
+                    {
+                        SerialPrint("E", F("Update"), F("Build Path error"));
+                        _myBot->sendMessage("Build Path error!", _chatID);
+                    }
+                }
+            }
+            OTAfilepath = "";
+            typeOTA = 0;
+        }
+        //  -------------- обработка файлов загруженных пользователем --------------
+        // -------------------------------------------------------------------------
+        else if (msg.isFile)
+        {
+            if (msg.fileName.endsWith(F(".tft")) && msg.chatID == _chatID)
+            {
+                OTAfilepath = msg.fileUrl;
+                _myBot->inlineMenu("Хотите прошить экран Nextion? На esp " + jsonReadStr(settingsFlashJson, F("name")) + "\n Next_firmware", F("Firmware \t Cancel"));
+            }
+            else if (msg.text.indexOf("download") != -1 && msg.chatID == _chatID)
+            {
+                downloadFile(msg);
+            }
+        }
+        else if (msg.text.indexOf("Next_firmware") != -1)
+        {
+            // удаляем последнее сообщение от бота
+            _myBot->deleteMessage(_myBot->lastBotMsg());
+            if (msg.data.indexOf("Firmware") != -1 && OTAfilepath != "")
+            {
+                for (std::list<IoTItem *>::iterator it = IoTItems.begin(); it != IoTItems.end(); ++it)
+                {
+                    if ((*it)->getSubtype() == "NextionUpload" || (*it)->getSubtype() == "Nextion")
+                    {
+                        _myBot->sendMessage("Nextion firmware ...", _chatID);
+                        (*it)->uploadNextionTlgrm(OTAfilepath);
+                    }
+                }
+                OTAfilepath = "";
+            }
+        }
         // -------------- Обработка кнопок меню созданного в сценарии --------------
         // -------------------------------------------------------------------------
-        if (auto search = mapBtnMenu.find(msg.text); search != mapBtnMenu.end())
+        else if (auto search = mapBtnMenu.find(msg.text); search != mapBtnMenu.end())
         {
             String outMsg;
             outMsg = mapBtnMenu[msg.text]->message;
@@ -325,7 +486,7 @@ public:
             }
             if (mapBtnMenu[msg.text]->setId != "")
             {
-                //outMsg += ", " + mapBtnMenu[msg.text]->setId + "=" + mapBtnMenu[msg.text]->value;
+                // outMsg += ", " + mapBtnMenu[msg.text]->setId + "=" + mapBtnMenu[msg.text]->value;
                 generateOrder(mapBtnMenu[msg.text]->setId, mapBtnMenu[msg.text]->value);
             }
             SerialPrint("i", F("Telegram"), "chat ID: " + _chatID + ", msg: " + String(outMsg));
@@ -348,12 +509,12 @@ public:
                     if (item)
                     {
                         outMsg += ": " + item->getValue();
-                        //SerialPrint("i", F("Telegram"), "chat ID: " + _chatID + ", msg: " + String(msg.data));
+                        // SerialPrint("i", F("Telegram"), "chat ID: " + _chatID + ", msg: " + String(msg.data));
                     }
                 }
                 if (mapBtnInline[msg.data]->setId != "")
                 {
-                    //outMsg += ", " + mapBtnInline[msg.data]->setId + "=" + mapBtnInline[msg.data]->value;
+                    // outMsg += ", " + mapBtnInline[msg.data]->setId + "=" + mapBtnInline[msg.data]->value;
                     generateOrder(mapBtnInline[msg.data]->setId, mapBtnInline[msg.data]->value);
                 }
                 SerialPrint("i", F("Telegram"), "chat ID: " + _chatID + ", msg: " + String(outMsg));
@@ -431,7 +592,7 @@ public:
         }
         // --------------  вывод инлайн меню всех юнитов --------------
         // -------------------------------------------------------------------------
-        else if (msg.text.indexOf("all") != -1)
+        else if (msg.text.indexOf("/all") != -1)
         {
             // String list = returnListOfParams();
             String out;
@@ -460,7 +621,7 @@ public:
         }
         //  -------------- обработка команды /set_ID_VALUE --------------
         // -------------------------------------------------------------------------
-        else if (msg.text.indexOf("set") != -1)
+        else if (msg.text.indexOf("/set") != -1)
         {
             msg.text = deleteBeforeDelimiter(msg.text, "_");
             generateOrder(selectToMarker(msg.text, "_"), selectToMarkerLast(msg.text, "_"));
@@ -469,7 +630,7 @@ public:
         }
         // --------------  обработка команды /get_ID --------------
         // -------------------------------------------------------------------------
-        else if (msg.text.indexOf("get") != -1)
+        else if (msg.text.indexOf("/get") != -1)
         {
             msg.text = deleteBeforeDelimiter(msg.text, "_");
             IoTItem *item = findIoTItem(msg.text);
@@ -481,52 +642,56 @@ public:
         }
         //  -------------- обработка запроса пользователя на скачивание файла --------------
         // -------------------------------------------------------------------------
-        else if (msg.text.indexOf("file") != -1 && msg.chatID == _chatID)
+        else if (msg.text.indexOf("/file") != -1 && msg.chatID == _chatID)
         {
-            msg.text = deleteBeforeDelimiter(msg.text, "_");
-            SerialPrint("i", F("Telegram"), "chat ID: " + _chatID + ", get file: " + String(msg.text));
-            auto file = FileFS.open(selectToMarker(msg.text, "_"), FILE_READ); // /test.png
-            if (!file)
+            if (msg.text.indexOf("file_type") != -1)
             {
-                SerialPrint("E", F("Telegram"), "Fail send file: " + selectToMarker(msg.text, "_"));
-                return;
+                _myBot->sendMessage("Support file type download: \n 0-foto \n 1-audio \n 2-doc \n 3-video \n 4-gif \n 5-voice", _chatID);
             }
-            int type = atoi(selectToMarkerLast(msg.text, "_").c_str());
-            _myBot->sendFile(file, (FB_FileType)type, selectToMarker(msg.text, "_"), _chatID);
-            file.close();
-        }
-        //  -------------- обработка файлов загруженных пользователем --------------
-        // -------------------------------------------------------------------------
-        else if (msg.isFile)
-        {
-            if (msg.text.indexOf("download") != -1 && msg.chatID == _chatID)
+            else
             {
-                downloadFile(msg);
-            }
-            else if (msg.text.indexOf("nextion") != -1 && msg.chatID == _chatID)
-            {
-                for (std::list<IoTItem *>::iterator it = IoTItems.begin(); it != IoTItems.end(); ++it)
+                msg.text = deleteBeforeDelimiter(msg.text, "_");
+                SerialPrint("i", F("Telegram"), "chat ID: " + _chatID + ", get file: " + String(msg.text));
+                auto file = FileFS.open(selectToMarker(msg.text, "_"), FILE_READ); // /test.png
+                if (!file)
                 {
-                    if ((*it)->getSubtype() == "NextionUpload" || (*it)->getSubtype() == "Nextion")
-                    {
-                        (*it)->uploadNextionTlgrm(msg.fileUrl);
-                    }
+                    SerialPrint("E", F("Telegram"), "Fail send file: " + selectToMarker(msg.text, "_"));
+                    return;
                 }
+                int type = atoi(selectToMarkerLast(msg.text, "_").c_str());
+                _myBot->sendFile(file, (FB_FileType)type, selectToMarker(msg.text, "_"), _chatID);
+                file.close();
             }
         }
         //  -------------- обработка остальных команд --------------
         // -------------------------------------------------------------------------
-        else if (msg.text.indexOf("help") != -1)
+        else if (msg.text.indexOf("/help") != -1)
         {
-            _myBot->sendMessage("ID: " + chipId, _chatID);
-            _myBot->sendMessage("chatID: " + _chatID, _chatID);
-            _myBot->sendMessage("Command: /help - this text \n /all - inline menu get all values \n /allMenu - bottom menu get all values \n /menu - bottom USER menu from scenario \n /get_id - get value by ID \n /set_id_value - set value in ID \n /file_name_type - take file from esp \n /file_type - support file type \n send file and write download - \"download\" file to esp \n send tft file and write \"nextion\" - flash file.tft to Nextion", _chatID);
+            if (msg.text.indexOf("/helpDebug") != -1)
+            {
+                _myBot->sendMessage("В папке toolchchain с которым собирались (Для esp32 например %%USERPROFILE%/.platformio/packages/toolchain-xtensa-esp32@8.4.0+2021r2-patch5/bin) из командной строки Windows (cmd) запустить файл xtensa-esp32-elf-addr2line.exe \nС параметрами -pfiaC -e Путь_к_файлу/firmware.elf Стэк_адресов", _chatID);
+            }
+            else
+            {
+                _myBot->sendMessage("ID: " + chipId, _chatID);
+                _myBot->sendMessage("chatID: " + _chatID, _chatID);
+                _myBot->sendMessage("Command: /help - this text \n /all - inline menu get all values \n /allMenu - bottom menu get all values \n /menu - bottom USER menu from scenario \n /get_id - get value by ID \n /set_id_value - set value in ID \n /file_name_type - take file from esp \n /file_type - support file type \n /reboot - reboot esp \n\n send file and write download - \"download\" file to esp \n\n send *.tft file - flash Nextion \n\n send firmware.bin or littltfs.bin - firmware ESP ", _chatID);
+            }
         }
-        else if (msg.text.indexOf("file_type") != -1)
+        else if (msg.text.indexOf("/reboot") != -1)
         {
-            _myBot->sendMessage("Support file type download: \n 0-foto \n 1-audio \n 2-doc \n 3-video \n 4-gif \n 5-voice", _chatID);
+            _myBot->inlineMenu("Перезагрузить esp " + jsonReadStr(settingsFlashJson, F("name")) + "\n esp_reboot", F("Reboot \t Cancel"));
         }
-        else
+        else if (msg.text.indexOf("esp_reboot") != -1)
+        {
+            // удаляем последнее сообщение от бота
+            _myBot->deleteMessage(_myBot->lastBotMsg());
+            if (msg.data.indexOf("Reboot") != -1)
+            {
+                fl_reboot = true;
+            }
+        }
+        else if (msg.text.indexOf("/") != -1)
         {
             _myBot->sendMessage("Wrong order, use /help", _chatID);
         }
@@ -638,6 +803,46 @@ public:
         }
         mapBtnInline.clear();
     }
+
+    // ===================== OTA =====================
+    // ОТА обновление, вызывать внутри обработчика сообщения по флагу OTA
+    uint8_t static _update(String *_file_ptr, __attribute__((unused)) uint8_t type = FB_FIRMWARE)
+    {
+#ifndef FB_NO_OTA
+        if (!_file_ptr)
+            return 8;
+        uint8_t OTAflag = type;
+        _myBot->sendMessage((type == FB_FIRMWARE) ? F("OTA firmware...") : F("OTA spiffs..."), _chatID);
+
+#ifdef ESP8266
+        ESPhttpUpdate.rebootOnUpdate(false);
+#ifdef FB_DYNAMIC
+        BearSSL::WiFiClientSecure client;
+        client.setInsecure();
+#endif
+        if (OTAflag == FB_FIRMWARE)
+            _OTAstate = ESPhttpUpdate.update(client, *_file_ptr);
+        else if (OTAflag == FB_SPIFFS)
+            _OTAstate = ESPhttpUpdate.updateFS(client, *_file_ptr);
+#else
+        WiFiClientSecure client;
+        client.setInsecure();
+        httpUpdate.rebootOnUpdate(false);
+        if (OTAflag == FB_FIRMWARE)
+            _OTAstate = httpUpdate.update(client, *_file_ptr);
+        else if (OTAflag == FB_SPIFFS)
+            _OTAstate = httpUpdate.updateSpiffs(client, *_file_ptr);
+#endif
+#endif
+        return 1;
+    }
+
+    // ОТА обновление SPIFFS, вызывать внутри обработчика сообщения по флагу OTA
+    uint8_t static _updateFS(String *_file_ptr)
+    {
+        return _update(_file_ptr, FB_SPIFFS);
+    }
+
     ~Telegram_v2()
     {
         clearMapMenu();

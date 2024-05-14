@@ -207,6 +207,10 @@
                 "active": false
             },
             {
+                "path": "src/modules/sensors/BL0937",
+                "active": true
+            },
+            {
                 "path": "src/modules/sensors/Ble",
                 "active": false
             },
@@ -244,7 +248,7 @@
             },
             {
                 "path": "src/modules/sensors/EnergyMon485",
-                "active": true
+                "active": false
             },
             {
                 "path": "src/modules/sensors/ExampleModule",

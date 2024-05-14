@@ -10,7 +10,7 @@ from sys import platform
 
 if platform == "linux" or platform == "linux2":
     # linux
-    mainPyPath = '~/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiClient.cpp'
+    mainPyPath = '/home/rise/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiClient.cpp'
 else:
     # windows
     mainPyPath = os.environ['USERPROFILE'] + '\\.platformio\\packages\\framework-arduinoespressif32\\libraries\\WiFi\\src\\WiFiClient.cpp'

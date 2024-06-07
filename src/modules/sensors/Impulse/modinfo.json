@@ -15,7 +15,9 @@
       "pin": 16,
       "pinMode": "INPUT",
       "debounceDelay": 3,
-      "multiply": 1
+      "multiply": 1,
+      "count": 0,
+      "timeORcount":0
     }
   ],
   "about": {
@@ -24,7 +26,7 @@
     "authorGit": "https://github.com/avaksru",
     "specialThanks": "",
     "moduleName": "Impulse",
-    "moduleVersion": "2.0",
+    "moduleVersion": "3.0",
     "usedRam": {
       "esp32_4mb": 15,
       "esp8266_4mb": 15
@@ -35,7 +37,9 @@
       "int": "Период сбора импульсов  в секундах",
       "pin": "Укажите GPIO номер пина для чтения импульсов",
       "pinMode": "Может быть INPUT_PULLUP INPUT_PULLDOWN INPUT",
-      "debounceDelay": "Время обработки дребезга (миллисекунд)"
+      "debounceDelay": "Время обработки дребезга (миллисекунд)",
+      "count": "количество импульсов для выработки события c 1(единицей в данных). По событию можно прибавлять к другой переменной, так же домножить на multiply. Например 32имп = 0.1кВт => count=32, multiply=0.1",
+      "timeORcount": "0 - выдает количество импульсов за int секунд; 1 - выдает событие с 1 когда количество импульсов наберется равным count"
     }
   },
   "defActive": true,

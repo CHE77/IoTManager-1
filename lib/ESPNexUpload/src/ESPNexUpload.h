@@ -56,6 +56,13 @@
 #include <Arduino.h>
 #include <StreamString.h>
 
+#ifdef ESP8266
+#include <SoftwareSerial.h>
+#else
+#include <HardwareSerial.h>
+#include <SoftwareSerial.h>
+#endif
+
 /**
  * @addtogroup CoreAPI
  * @{
@@ -79,7 +86,7 @@ public: /* methods */
      *
      * @param uint32_t upload_baudrate - set upload baudrate.
      */
-    ESPNexUpload(uint32_t upload_baudrate, uint8_t rx=0, uint8_t tx=0);
+    ESPNexUpload(uint32_t upload_baudrate, int line, int rx, int tx);
 
     /**
      * destructor.
@@ -256,6 +263,8 @@ private: /* methods */
      */
     uint32_t calculateTransmissionTimeMs(String message);
 
+    void nexSerialBegin(uint32_t upload_baudrate, int line, int rx, int tx);
+
 private:                        /* data */
     uint32_t _baudrate;         /* nextion serail baudrate */
     uint32_t _undownloadByte;   /* undownload byte of tft file */
@@ -263,8 +272,14 @@ private:                        /* data */
     uint16_t _sent_packets = 0; /* upload baudrate */
     uint8_t _rx;
     uint8_t _tx;
-
+    uint8_t _line;
     THandlerFunction _updateProgressCallback;
+
+#ifdef ESP8266
+        SoftwareSerial* nexSerial;
+#else
+        Stream* nexSerial;
+#endif
 };
 /**
  * @}

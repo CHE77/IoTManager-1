@@ -8,7 +8,9 @@
 // #include <GyverGFX.h>
 // #include <CharPlot.h>
 // #include "esp_camera.h"
-
+#ifdef ESP8266
+#define FB_DYNAMIC
+#endif
 #include <FastBot.h>
 #include <map>
 
@@ -93,6 +95,7 @@ public:
             if (fl_rollback)
             {
                 _myBot->tickManual(); // Чтобы отметить сообщение прочитанным
+#ifdef ESP32
                 if (Update.rollBack())
                 {
                     SerialPrint("I", F("Update"), F("Откат OTA успешно выполнен"));
@@ -104,6 +107,7 @@ public:
                     SerialPrint("E", F("Update"), F("Откат OTA не выполнен!"));
                     _myBot->sendMessage("Откат OTA не выполнен!", _chatID);
                 }
+#endif
             }
             // была попытка OTA обновления. Обновляемся после ответа серверу!
             if (_OTAstate >= 0)
@@ -369,10 +373,16 @@ public:
         // -------------------------------------------------------------------------
         if (msg.text.indexOf("/rollback") != -1 && msg.chatID == _chatID)
         {
+#ifdef ESP32
             _myBot->inlineMenu("Вы уверены, что хотите откатить прошивку? " + jsonReadStr(settingsFlashJson, F("name")) + " \n OTA_roll", F("Rollback \t Cancel"));
+#elif ESP8266
+            SerialPrint("E", F("Update"), F("Откат OTA не поддерживается на esp8266!"));
+            _myBot->sendMessage("Откат OTA не поддерживается на esp8266!", _chatID);
+#endif
         }
         else if (msg.text.indexOf("OTA_roll") != -1)
         {
+#ifdef ESP32
             // удаляем последнее сообщение от бота
             _myBot->deleteMessage(_myBot->lastBotMsg());
             if (msg.data.indexOf("Rollback") != -1)
@@ -387,6 +397,7 @@ public:
                     _myBot->sendMessage("Откат OTA не возможен!", _chatID);
                 }
             }
+#endif
         }
         // -------------- Обработка файлов *.bin для прошивки по OTA --------------
         // -------------------------------------------------------------------------

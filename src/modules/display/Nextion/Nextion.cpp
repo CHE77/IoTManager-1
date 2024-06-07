@@ -211,9 +211,10 @@ public:
             if (!updated)
             {
                 SerialPrint("I", F("NextionUpdate"), "connecting to  " + (String)_host);
-                HTTPClient http;
+                HTTPClient http; 
 #if defined ESP8266
-                if (!http.begin(_host, 80, _url))
+                WiFiClient client;
+                if (!http.begin(client, _host, 80, _url))
                     SerialPrint("I", F("NextionUpdate"), "connection failed  ");
 #elif defined ESP32
                 if (!http.begin(String("http://") + _host + _url))

@@ -12,7 +12,9 @@ private:
     bool _lastButtonState = LOW;
     unsigned long _lastDebounceTime = 0;
     int _debounceDelay = 50;
+    int _timeORcount = 0;
     int _count = 0;
+    int CNT = 0;
     unsigned long timing;
 
 public:
@@ -22,6 +24,8 @@ public:
         jsonRead(parameters, F("pin"), _pin);
         jsonRead(parameters, F("pinMode"), _pinMode);
         jsonRead(parameters, F("debounceDelay"), _debounceDelay);
+        jsonRead(parameters, F("count"), _count);
+        jsonRead(parameters, F("timeORcount"), _timeORcount);
         jsonRead(parameters, "int", _int);
         _round = 0;
 
@@ -53,18 +57,31 @@ public:
             if (_reading != _buttonState)
             {
                 _buttonState = _reading;
-                _count++;
+                CNT++;
             }
-            if (_count == 1)
+            if (CNT == 1)
             {
                 timing = millis();
             }
-            if (millis() - timing > _int * 1000 && _count > 1)
-            {
-                timing = millis();
-                value.valD = _count;
-                regEvent(value.valD, F("Impulse"));
-                _count = 0;
+            if (!_timeORcount)
+            { // работаем по времени
+                if (millis() - timing > _int * 1000 && CNT > 1)
+                {
+                    timing = millis();
+                    value.valD = CNT;
+                    regEvent(value.valD, F("Impulse"));
+                    CNT = 0;
+                }
+            }
+            else
+            { // работаем по количеству импульсов
+                if (_count && CNT == _count)
+                {
+                    value.valD = 1;
+                    regEvent(value.valD, F("Impulse"));
+                    CNT = 0;
+                }
+                
             }
         }
 

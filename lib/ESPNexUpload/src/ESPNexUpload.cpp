@@ -26,33 +26,6 @@
 #define DEBUG_SERIAL_ENABLE
 #include "ESPNexUpload.h"
 
-#if defined ESP8266
-
-#include <SoftwareSerial.h>
-
-#ifndef NEXT_RX
-#define NEXT_RX 14 // Nextion RX pin | Default 14 / D5
-#define NEXT_TX 12 // Nextion TX pin | Default 12 / D6
-#endif
-#ifndef nexSerial
-//SoftwareSerial softSerial(NEXT_RX, NEXT_TX);
-#define nexSerial softSerial
-#define nexSerialBegin(a, b, c) nexSerial.begin(a)
-#endif
-
-#elif defined ESP32
-
-#ifndef NEXT_RX
-#define NEXT_RX 17 // Nextion RX pin | Default 16
-#define NEXT_TX 16 // Nextion TX pin | Default 17
-#endif
-#ifndef nexSerial
-#define nexSerial Serial2
-#define nexSerialBegin(a, rx, tx) nexSerial.begin(a, SERIAL_8N1, rx, tx)
-#endif
-
-#endif
-
 #ifdef DEBUG_SERIAL_ENABLE
 #define dbSerialPrint(a) Serial.print(a)
 #define dbSerialPrintHex(a) Serial.print(a, HEX)
@@ -77,21 +50,38 @@
 	} while (0)
 #endif
 
-ESPNexUpload::ESPNexUpload(uint32_t upload_baudrate, uint8_t rx, uint8_t tx)
+ESPNexUpload::ESPNexUpload(uint32_t upload_baudrate, int line, int rx, int tx)
 {
 	_upload_baudrate = upload_baudrate;
-	if (rx == 0 || tx == 0)
-	{
-		_rx = NEXT_RX;
-		_tx = NEXT_TX;
-	}else{
-		_rx = rx;
-		_tx = tx;
-	}
+	_rx = rx;
+	_tx = tx;
+	_line = line;
+
 #if defined ESP8266
-	SoftwareSerial softSerial(_rx, _tx);
+	nexSerial = new SoftwareSerial(_rx, _tx);
+#else
+	if (line >= 0) {
+        nexSerial = new HardwareSerial(line);
+ //       ((HardwareSerial*)nexSerial)->begin(_upload_baudrate, SERIAL_8N1, _rx, _tx);
+    } else {
+        nexSerial = new SoftwareSerial(_rx, _tx);
+ //       ((SoftwareSerial*)nexSerial)->begin(_upload_baudrate);
+    }
 #endif
 
+}
+
+void ESPNexUpload::nexSerialBegin(uint32_t _speed, int _line, int _rx, int _tx)
+{
+#if defined ESP8266
+	nexSerial->begin(_speed);
+#else
+	if (_line >= 0) {
+        ((HardwareSerial*)nexSerial)->begin(_speed, SERIAL_8N1, _rx, _tx);
+    } else {
+        ((SoftwareSerial*)nexSerial)->begin(_speed);
+    }
+#endif	
 }
 
 bool ESPNexUpload::connect()
@@ -172,7 +162,7 @@ bool ESPNexUpload::_searchBaudrate(uint32_t baudrate)
 	dbSerialPrint(F("init nextion serial interface on baudrate: "));
 	dbSerialPrintln(baudrate);
 
-	nexSerialBegin(baudrate, _rx, _tx);
+	nexSerialBegin(baudrate, _line, _rx, _tx);
 	_printInfoLine(F("ESP baudrate established, try to connect to display"));
 	const char _nextion_FF_FF[3] = {0xFF, 0xFF, 0x00};
 
@@ -231,20 +221,20 @@ void ESPNexUpload::sendCommand(const char *cmd, bool tail, bool null_head)
 
 	if (null_head)
 	{
-		nexSerial.write(0x00);
+		((HardwareSerial*)nexSerial)->write(0x00);
 	}
 
-	while (nexSerial.available())
+	while (nexSerial->available())
 	{
-		nexSerial.read();
+		nexSerial->read();
 	}
 
-	nexSerial.print(cmd);
+	nexSerial->print(cmd);
 	if (tail)
 	{
-		nexSerial.write(0xFF);
-		nexSerial.write(0xFF);
-		nexSerial.write(0xFF);
+		nexSerial->write(0xFF);
+		nexSerial->write(0xFF);
+		nexSerial->write(0xFF);
 	}
 	_printSerialData(true, cmd);
 }
@@ -270,10 +260,10 @@ uint16_t ESPNexUpload::recvRetString(String &response, uint32_t timeout, bool re
 	while (millis() - start <= timeout)
 	{
 
-		while (nexSerial.available())
+		while (nexSerial->available())
 		{
 
-			c = nexSerial.read();
+			c = nexSerial->read();
 			if (c == 0)
 			{
 				continue;
@@ -344,9 +334,9 @@ bool ESPNexUpload::_setPrepareForFirmwareUpdate(uint32_t upload_baudrate)
 	// because switching to another baudrate (nexSerialBegin command) has an higher prio.
 	// The ESP will first jump to the new 'upload_baudrate' and than process the serial 'transmit buffer'
 	// The flush command forced the ESP to wait until the 'transmit buffer' is empty
-	nexSerial.flush();
+	nexSerial->flush();
 
-	nexSerialBegin(upload_baudrate, _rx, _tx);
+	nexSerialBegin(upload_baudrate, _line, _rx, _tx);
 	_printInfoLine(F("changing upload baudrate..."));
 	_printInfoLine(String(upload_baudrate));
 
@@ -421,7 +411,7 @@ bool ESPNexUpload::upload(const uint8_t *file_buf, size_t buf_size)
 			c = file_buf[i];
 
 			// write byte to nextion over serial
-			nexSerial.write(c);
+			nexSerial->write(c);
 
 			// update sent packets counter
 			_sent_packets++;
@@ -438,7 +428,7 @@ bool ESPNexUpload::upload(Stream &myFile)
 #endif
 
 	// create buffer for read
-	uint8_t buff[2048] = {0};
+	uint8_t buff[4096] = {0};
 
 	// read all data from server
 	while (_undownloadByte > 0 || _undownloadByte == -1)
@@ -492,7 +482,7 @@ void ESPNexUpload::end()
 	this->softReset();
 
 	// end Serial connection
-	nexSerial.end();
+	((HardwareSerial*)nexSerial)->end();
 
 	// reset sent packets counter
 	_sent_packets = 0;

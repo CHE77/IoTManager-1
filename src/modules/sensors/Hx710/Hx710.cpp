@@ -11,11 +11,12 @@ class HX710b : public IoTItem {
 
    public:
     HX710b(String parameters) : IoTItem(parameters) {
-        int data, clock;
+        int data, clock, gain;
         jsonRead(parameters, "data", data);
         jsonRead(parameters, "clock", clock);
+        jsonRead(parameters, "gain", gain);
 
-        pressure_sensor.begin(data, clock);
+        pressure_sensor.begin(data, clock, gain);
         pressure_sensor.tare();
     }
 

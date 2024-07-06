@@ -428,7 +428,7 @@ bool ESPNexUpload::upload(Stream &myFile)
 #endif
 
 	// create buffer for read
-	uint8_t buff[2048] = {0};
+	uint8_t buff[4096] = {0};
 
 	// read all data from server
 	while (_undownloadByte > 0 || _undownloadByte == -1)

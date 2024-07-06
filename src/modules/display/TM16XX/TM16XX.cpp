@@ -4,7 +4,7 @@
 #include <TM1637.h>
 #include <TM1638.h>
 #include <TM16xxDisplay.h>
-#include <TM16xxbuttons.h>
+#include <TM16xxButtons.h>
 
 
 TM16xxButtons* buttons = nullptr; // указатель на объект управления кнопками для TM1638 иначе nullptr

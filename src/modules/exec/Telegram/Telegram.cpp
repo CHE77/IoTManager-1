@@ -110,8 +110,13 @@ class Telegram : public IoTItem {
         }
     }
 
-    ~Telegram() {
+    IoTItem *getTlgrmDriver()
+    {
+        return this;
+    }
 
+    ~Telegram() {
+        tlgrmItem = nullptr;
     };
 };
 

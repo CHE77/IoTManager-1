@@ -7,10 +7,13 @@ from sys import platform
 
 if platform == "linux" or platform == "linux2":
     # linux
-    mainPyPath = '/home/rise/.platformio/platforms/espressif8266@4.0.1/builder/main.py'
+    home_dir = os.environ['HOME']
 else:
     # windows
-    mainPyPath = os.environ['USERPROFILE'] + '\\.platformio\\platforms\\espressif8266@4.0.1\\builder\\main.py'
+    home_dir = os.environ['USERPROFILE']
+
+# Construct the path using os.path.join for platform independence
+mainPyPath = os.path.join(home_dir, '.platformio', 'packages', 'framework-arduinoespressif32', 'libraries', 'WiFi', 'src', 'WiFiClient.cpp')
 
 # print(mainPyPath)
 
